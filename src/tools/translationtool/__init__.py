@@ -9,6 +9,7 @@ from csv import reader
 # -------------------------------------------------
 
 
+__package__ = "TranslationTool"
 __author__ = "GianptDev"
 __version__ = 1.0
 
