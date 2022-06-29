@@ -234,6 +234,15 @@ class Database():
 		"""
 
 
+	def __repr__(self) -> str:
+		string = ""
+
+		for key in self.keys:
+			string += f"  {key._src} : '{key._name}'\n"
+		
+		return f"Database v1.0\nFolder: '{self._folder}'\n{string}"
+
+
 	# -------------------------------------------------
 
 
@@ -354,6 +363,46 @@ class Database():
 		
 		return False
 	
+
+	def load(self) -> bool:
+		"""
+		Load the database from the directory.
+
+		Returns true if loading is a success or false if it fails.
+		"""
+
+		if (check_directory(self._folder) == False):
+			return False
+		
+		database = join_path(self._folder, "database.xml")
+		
+		if (check_file(database) == False):
+			return False
+
+
+		with open(database, "r") as file:
+			root = parse_xml(file.read())
+		
+
+		for element in root:
+
+			if (element.tag == "keys"):
+				
+				for key_element in element:
+
+					if (key_element.tag == "key"):
+
+						if (not "name" in key_element.attrib):
+							raise Exception(f"Attribute 'name' missing in key defined in '{database}'.")
+						
+						if (not "src" in key_element.attrib):
+							raise Exception(f"Attribute 'src' missing in key defined in '{database}'.")
+						
+						key = self.__class__.Key(self, key_element.attrib["src"], key_element.attrib["name"])
+						self._add_key(key)
+		
+		return True
+
 	
 	def save(self) -> None:
 		"""
@@ -388,40 +437,6 @@ class Database():
 		
 		for key in self.keys:
 			key.save(key_folder)
-	
-	
-	def load(self) -> None:
-
-		if (check_directory(self._folder) == False):
-			return
-		
-		database = join_path(self._folder, "database.xml")
-
-		if (check_file(database) == False):
-			print(f"Nothing to load from 'database.xml' in '{self._folder}'.")
-			return
-
-
-		with open(database, "r") as file:
-			root = parse_xml(file.read())
-		
-
-		for element in root:
-
-			if (element.tag == "keys"):
-				
-				for key_element in element:
-
-					if (key_element.tag == "key"):
-
-						if (not "name" in key_element.attrib):
-							raise Exception(f"Attribute 'name' missing in key defined in '{database}'.")
-						
-						if (not "src" in key_element.attrib):
-							raise Exception(f"Attribute 'src' missing in key defined in '{database}'.")
-						
-						key = self.__class__.Key(self, key_element.attrib["src"], key_element.attrib["name"])
-						self._add_key(key)
 
 
 # -------------------------------------------------
