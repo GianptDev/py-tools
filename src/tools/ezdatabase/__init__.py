@@ -37,26 +37,16 @@ class Database():
 		# -------------------------------------------------
 
 		
-		def __init__(self, database: "Database", src: str, name: str) -> None:
+		def __init__(self, database: "Database", name: str) -> None:
 			
+			self._flag_changed: bool = False
+			self._flag_remove: bool = False
+			self._flag_loaded: bool = False
 
-			self.changed: bool = False
-			"""
-			Mark that the content of the current key has changed and should be saved.
-			"""
-			
-			self.remove: bool = False
-			"""
-			Mark the key to be removed, when saving it will erase the file instead if it exist.
-			"""
-			
 			self._database = ref(database)
-			self._src: str = src
+			self._src: Union[str, None] = None
 			self._name: str = name
-			self._description: Union[str, None] = None
 			self._properties: dict[str, any] = {}
-
-			self.load(join_path(database._folder, "keys"))
 		
 
 		def __repr__(self) -> str:
@@ -81,21 +71,6 @@ class Database():
 
 
 		@property
-		def description(self) -> Union[str, None]:
-			"""
-			The description of this key.
-			"""
-
-			return self._description
-		
-
-		@description.setter
-		def description(self, value: Union[str, None]) -> None:
-			self._description = value
-			self.changed = True
-		
-
-		@property
 		def properties(self) -> dict[str, any]:
 			"""
 			The properties of this key.
@@ -111,9 +86,11 @@ class Database():
 		
 
 		@property
-		def src(self) -> str:
+		def src(self) -> Union[str, None]:
 			"""
 			An unique id for the key used internally inside the database.
+
+			If the key has just been created this property should be None, it will be changed once when is saved.
 			"""
 
 			return self._src
@@ -124,11 +101,6 @@ class Database():
 
 		def _to_xml(self) -> XmlElement:
 			root = XmlElement("key")
-
-			if (self._description != None):
-				description = XmlElement("description")
-				description.text = self._description
-				root.append(description)
 			
 			if (len(self._properties) > 0):
 				properties = XmlElement("properties")
@@ -142,28 +114,31 @@ class Database():
 
 			for element in root:
 
-				if (element.tag == "description"):
-					self._description = element.text
-					self.changed = True
-				
-				elif (element.tag == "properties"):
+				if (element.tag == "properties"):
 					self._properties = {**self._properties, **element.attrib}
 					self.changed = True
 			
 
-
 		# -------------------------------------------------
 
 
-		def rename(self, name: str) -> None:
+		def is_new(self) -> bool:
+			"""
+			Check if the key has no unique id, and so has just been created.
+			"""
 
-			for key in self._database().keys:
+			return self._src == None
 
-				if ((key != self) and (key._name == name)):
-					raise Exception(f"Another key is named '{name}'.")
-			
-			self._name = name
-			self.changed = True
+
+		def is_changed(self) -> bool:
+			"""
+			Return if the key has got changes recently by checking the change flag.
+			"""
+
+			return self._flag_changed
+
+
+		# -------------------------------------------------
 
 
 		def set_property(self, name: str, value: any) -> None:
@@ -184,39 +159,90 @@ class Database():
 			self.changed = True
 		
 
-		def load(self, path: str) -> None:
+		def rename(self, name: str) -> None:
+
+			for key in self._database()._keys:
+
+				if ((key != self) and (key._name == name)):
+					raise Exception(f"Another key is named '{name}'.")
 			
-			src_path = join_path(path, "%s.xml" % self._src)
+			self._name = name
+			self.changed = True
+
+
+		def load(self) -> None:
+			"""
+			Load the key from his source file if it exist.
+
+			- If changed are applyied before loading they will be lost unless saved first.
+			"""
+
+			src_path = join_path(self._database()._folder, "keys", "%s.xml" % self._src)
 
 			if (check_file(src_path) == False):
 				return
 			
 			with open(src_path, "r") as file:
-				element = parse_xml(file.read())
+				root = parse_xml(file.read())
 			
-			self._from_xml(element)
+			for element in root:
+				
+				if (element.tag == "properties"):
+					self._properties = {**element.attrib}
 
 		
-		def save(self, path: str) -> None:
+		def save(self) -> None:
 			"""
 			Save the file with all the content of the key and remove the changed mark.
+
+			- The key will not be saved if no changes are marked.
+			- The key file will be removed if the remove flag is enabled.
 			"""
 
-			src_path = join_path(path, "%s.xml" % self._src)
+			if (self._src == None):
+
+				while(True):
+					found = False
+					src_id = random_string(8)
+
+					for other_key in self._database()._keys:
+
+						if (other_key._src == src_id):
+							found = True
+							break
+					
+					if (found == False):
+						self._src = src_id
+						break
+
+				self._flag_changed = True
+
+			src_path = join_path(self._database()._folder, "keys", "%s.xml" % self._src)
 			
-			if (self.remove == True):
+			if (self._flag_remove == True):
 
 				if (check_file(src_path) == True):
 					remove_file(src_path)
+				
+				self._database()._keys.remove(self)
 			
 			else:
-				
-				if (self.changed == True):
+
+				if (self._flag_changed == True):
 					tree = XmlTree(self._to_xml())
 					xml_indent(tree, "\t")
 					tree.write(src_path)
 
-			self.changed = False
+			self._flag_changed = False
+
+
+		def free(self) -> None:
+			self._properties = {}
+			self._flag_changed = False
+
+
+		def duplicate(self, name: str) -> "Database.Key":
+			return None
 
 
 	# -------------------------------------------------
@@ -224,23 +250,17 @@ class Database():
 
 	def __init__(self, folder: str) -> None:
 		
-
 		self._folder: str = folder
-
-
-		self.keys: list[__class__.Key] = []
-		"""
-		List of all keys inside the database.
-		"""
+		self._keys: list[__class__.Key] = []
 
 
 	def __repr__(self) -> str:
 		string = ""
 
-		for key in self.keys:
+		for key in self._keys:
 			string += f"  {key._src} : '{key._name}'\n"
 		
-		return f"Database v1.0\nFolder: '{self._folder}'\n{string}"
+		return f"Database\nFolder: '{self._folder}'\n{string}"
 
 
 	# -------------------------------------------------
@@ -260,41 +280,13 @@ class Database():
 		self._folder = value
 
 
-	# -------------------------------------------------
-
-
-
-	def _src(self) -> str:
-
-		while(True):
-			src = ""
-
-			for n in range(8):
-				src += chr(randint(97,122))
-
-			found = False
-
-			for other_key in self.keys:
-				
-				if (other_key._src == src):
-					found = True
-					break
-			
-			if (found == False):
-				break
-
-		return src
-
-
-	def _add_key(self, key: "Database.Key") -> None:
+	@property
+	def keys(self) -> list["Database.Key"]:
 		"""
-		Called every time a new key need to be added, it must add the new key in the list.
-
-		- virtual
+		The list of all keys inside the database.
 		"""
 
-		key.rename(key._name)
-		self.keys.append(key)
+		return self._keys
 
 
 	# -------------------------------------------------
@@ -308,135 +300,162 @@ class Database():
 		if (self.get_key(name) != None):
 			return None
 
-		key = self.__class__.Key(self, self._src(), name)
-		key.changed = True
 
-		self._add_key(key)
+		key = self.__class__.Key(self, name)
+		key.changed = True
+		self._keys.append(key)
+
 		return key
 	
-	
-	def remove_key(self, name: str) -> bool:
-		"""
-		Remove the key with the specific name.
-		"""
 
-		index = 0
-		found = False
-
-		for key in self.keys:
-
-			if (key.name == name):
-				found = True
-				break
-			
-			index += 1
-		
-		if (found == False):
-			return False
-		
-		del self.keys[index]
-		return True
-	
-	
 	def get_key(self, name: str) -> Union["Database.Key", None]:
 		"""
 		Get the key with the specific name, the key will be obtained even if marked to be removed.
 		"""
 
-		for key in self.keys:
+		for key in self._keys:
 
 			if (key.name == name):
 				return key
 		
 		return None
 	
-	
-	def is_changed(self) -> bool:
+
+	def exist(self) -> bool:
 		"""
-		Check if a key or something in the database has changed.
-		"""
-
-		for key in self.keys:
-
-			if (key.changed == True):
-				return True
-		
-		return False
-	
-
-	def load(self) -> bool:
-		"""
-		Load the database from the directory.
-
-		Returns true if loading is a success or false if it fails.
+		Check if the folder of this database already contain another database or a previus save.
 		"""
 
-		if (check_directory(self._folder) == False):
-			return False
-		
-		database = join_path(self._folder, "database.xml")
-		
-		if (check_file(database) == False):
-			return False
+		return is_database(self._folder)
 
 
-		with open(database, "r") as file:
-			root = parse_xml(file.read())
-		
+	def load(self) -> None:
+		"""
+		Load all database data from a folder.
+		"""
 
-		for element in root:
-
-			if (element.tag == "keys"):
-				
-				for key_element in element:
-
-					if (key_element.tag == "key"):
-
-						if (not "name" in key_element.attrib):
-							raise Exception(f"Attribute 'name' missing in key defined in '{database}'.")
-						
-						if (not "src" in key_element.attrib):
-							raise Exception(f"Attribute 'src' missing in key defined in '{database}'.")
-						
-						key = self.__class__.Key(self, key_element.attrib["src"], key_element.attrib["name"])
-						self._add_key(key)
-		
-		return True
+		load_database(self, self._folder)
 
 	
 	def save(self) -> None:
 		"""
-		Save the database and all keys.
+		Save the whole database and all his keys in a folder.
 		"""
 
-		key_folder = join_path(self._folder, "keys")
+		save_database(self, self._folder)
 
-		if (check_directory(self._folder) == False):
-			make_directory(self._folder)
-			make_directory(key_folder)
 
-		elif (check_directory(key_folder) == False):
-			make_directory(key_folder)
+# -------------------------------------------------
+
+
+def random_string(lenght: int) -> str:
+	"""
+	Generate a string of random characters of the alphabet.
+
+	Params:
+		lenght (int): Determine the lenght of the final string.
+	"""
+
+	string = ""
+
+	for n in range(lenght):
+
+		string += chr(randint(65,90) + 32)
+
+	return string
+
+
+def is_database(folder: str) -> bool:
+	"""
+	Check if a folder contain the content of a database.
+
+	Params:
+		folder (str): The input folder to check.
+	
+	Returns:
+		True: If the folder exist and contain at least database.xml
+		False: If the folder does not exist or not contain databse.xml
+	"""
+
+	return (check_directory(folder) and check_file(join_path(folder, "database.xml")))
+
+
+def load_database(database: Database, folder: str) -> None:
+	"""
+	Append inside a database all the content of a folder that contain database data.
+
+	If the folder does not contain a database an exception will be raised.
+
+	Params:
+		databse (Dabatase): The database to fill.
+		folder (str): The folder that contain the database.
+	"""
+
+	if (is_database(folder) == False):
+		raise Exception(f"The folder '{folder}' does not contain a database.")
+	
+
+	database_file = join_path(folder, "database.xml")
+	with open(database_file, "r") as file:
+		root = parse_xml(file.read())
+	
+	
+	line_count = 0
+	for element in root:
+		line_count += 1
 		
-		database = XmlElement("database")
-		database_keys = XmlElement("keys")
-		database.append(database_keys)
+		if (element.tag == "key"):
 
-		for key in self.keys:
-			key_element = XmlElement("key")
-			key_element.attrib = {
-				"name":key._name,
-				"src":key._src
-			}
+			if (not "name" in element.attrib):
+				raise Exception(f"Attribute 'name' is missing from the key at line '{line_count}'")
+			
+			if (not "src" in element.attrib):
+				raise Exception(f"Attribute 'src' is missing from the key at line '{line_count}'")
 
-			database_keys.append(key_element)
-		
-		tree = XmlTree(database)
-		xml_indent(tree, "\t")
-		tree.write(join_path(self._folder, "database.xml"))
-		
-		for key in self.keys:
-			key.save(key_folder)
+
+			key = database.Key(database, element.attrib["name"])
+			key._src = element.attrib["src"]
+			database._keys.append(key)
+
+
+def save_database(database: Database, folder: str) -> None:
+	"""
+	Will save all the content of a database inside the input folder.
+
+	If the folder does not exist it will be created.
+
+	Params:
+		database (Database): The database to save.
+		folder (str): Where to save the database.
+	"""
+
+	key_folder = join_path(folder, "keys")
+
+	if (check_directory(folder) == False):
+		make_directory(folder)
+		make_directory(key_folder)
+
+	elif (check_directory(key_folder) == False):
+		make_directory(key_folder)
+	
+
+	# Save all keys first, some of them will also remove themself and stuff.
+	for key in tuple(database._keys):
+		key.save()
+	
+
+	database_file = XmlElement("database")
+
+	for key in database._keys:
+		key_element = XmlElement("key")
+		key_element.attrib = { "name":key._name, "src":key._src }
+
+		database_file.append(key_element)
+	
+
+	tree = XmlTree(database_file)
+	xml_indent(tree, "\t")
+	tree.write(join_path(database._folder, "database.xml"))
 
 
 # -------------------------------------------------
