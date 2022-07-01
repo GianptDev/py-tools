@@ -17,7 +17,6 @@ def main() -> None:
 		
 		if (key == None):
 			key = data.get_key(str(n))
-			key.load()
 			print(key.properties)
 			continue
 
@@ -25,6 +24,11 @@ def main() -> None:
 			"amogus":"123",
 			"amogi":"123"
 		}
+	
+	if (data.get_key("amogus") == None):
+		data.get_key("1").rename("amogus")
+	data.get_key("1").set_property("test", "amog")
+	data.get_key("2").removed = True
 
 	data.save()
 	
